@@ -1,33 +1,50 @@
-"""Command-line entry point.
+"""Command-line entry point: python cli.py "Find Italian recipes"
 
-Usage:
-    python cli.py "find me a quick Italian recipe with eggplant"
-
-Prints the top-5 results from ``pipeline(query)`` one per line.
+Connects to Neo4j (env vars or local docker-compose defaults), routes the
+question through the pipeline, and pretty-prints the top results. Exit 0
+on success, 1 if the pipeline raises UnsupportedQueryError, 2 on any
+other error.
 """
 
-import argparse
+from __future__ import annotations
+
+import os
 import sys
 
-from pipeline import pipeline
+from neo4j import GraphDatabase
+
+from mapper import UnsupportedQueryError
+from pipeline import answer
 
 
-def main() -> int:
-    """Parse argv, run the pipeline, pretty-print results.
+NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "testtest")
 
-    Exit code is 0 on success (including empty results — empty is a valid
-    pipeline outcome on UNKNOWN intent or all-NIL linker output).
+
+def main(argv: list[str]) -> int:
+    """Parse argv, route the question, pretty-print rows.
+
+    Required behaviour:
+      - Read the question from argv[1]; print a usage hint and exit 2
+        if missing.
+      - Open a Neo4j driver, route through pipeline.answer.
+      - Print each row on its own line; if rows is empty, print
+        "(no results)".
+      - Catch UnsupportedQueryError and print its message to stderr
+        with exit code 1.
     """
-    # TODO: build an argparse.ArgumentParser with a single positional
-    # `query` argument (help: "natural-language query string").
-    # TODO: call pipeline(args.query).
-    # TODO: pretty-print each result row, one per line, including at
-    # least the recipe name and URI. Format suggestion:
-    #     "  {name}  <{recipe}>"
+    # TODO (CLI):
+    # 1. Parse argv to extract the question text. Print usage if missing.
+    # 2. Build a Neo4j driver from the env vars above.
+    # 3. Call answer(driver, question); pretty-print the rows.
+    # 4. Handle UnsupportedQueryError → stderr message + exit 1.
+    # 5. Close the driver in a finally block.
     raise NotImplementedError(
-        "Implement main() — see the integration guide for the task description."
+        "cli.main is not yet implemented — see the Integration Guide "
+        "CLI section."
     )
 
 
 if __name__ == "__main__":
-    sys.exit(main() or 0)
+    sys.exit(main(sys.argv))

@@ -1,29 +1,44 @@
 # Integration 9B — Learner Notes
 
-Fill in each section below. Keep the total under ~500 words.
+Document your design choices and what you learned. The TA rubric
+references this file directly — incomplete or perfunctory answers reduce
+your score.
 
----
+## 1. Intents you handled and how you classified them
 
-## 1. Intents handled
+Describe your `detect_shape` rules. Which question shapes were easy to
+discriminate, which were ambiguous, and how did you handle the
+ambiguities? Cite at least one specific question from
+`data/eval_questions.jsonl` where two shapes were plausible candidates.
 
-_Your answer here — list the intents your `classify()` returns, briefly note
-which keywords/patterns trigger each, and how UNKNOWN is decided._
+> _Your answer here._
 
-## 2. A query that works (with output)
+## 2. A question that worked end-to-end
 
-_Your answer here — paste one NL query the pipeline answers correctly. Show
-the linker URIs it produced, the intent it classified to, and the top-5
-result rows._
+Pick one of the 15 canonical questions, walk through the pipeline:
+what `detect_shape` returned, what `extract_slots` returned, the
+compiled Cypher (with $param placeholders), the bound params dict, and
+the rows the driver returned. Paste the actual CLI output.
 
-## 3. A query that fails (with diagnosis)
+> _Your answer here._
 
-_Your answer here — paste one NL query the pipeline does not answer well.
-Attribute the failure to the responsible stage: NER, linker, intent, or
-SPARQL. Briefly justify the attribution._
+## 3. A failure mode you diagnosed
 
-## 4. One design trade-off
+Either a question that you initially mis-classified (and why), or an
+adversarial / off-template question and what your `UnsupportedQueryError`
+message told the caller. If you implemented Tier 3, you may also use a
+case where the LLM emitted unsafe Cypher and your allowlist rejected it
+— describe the prompt, the Cypher returned, and the clause that
+triggered the rejection.
 
-_Your answer here — describe one decision you made (e.g., regex
-classifier vs. ML classifier; co-occurrence vs. popularity for
-disambiguation; subClassOf entailment vs. exact-match in
-RECIPES_BY_CUISINE). Name the alternative and the cost you accepted._
+> _Your answer here._
+
+## 4. A design tradeoff between the deterministic mapper and the Tier 3 chain
+
+When would you prefer the deterministic mapper over the LLM chain in
+production, and vice versa? Cite a concrete dimension (latency,
+auditability, schema-coverage cost, distribution-shift robustness,
+operational risk) for each side. Both implementations are first-class —
+your answer should reflect that, not pick a winner.
+
+> _Your answer here._

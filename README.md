@@ -1,50 +1,98 @@
-# Integration 9B — NL → KG Semantic Search
+# Module 9 Week B — Integration Task: NL → Cypher
 
-A small natural-language → SPARQL pipeline over the Week B recipes KG. You
-compose: spaCy NER → entity linker → intent classifier → parameterized
-SPARQL template → ranked results.
+Schema-bounded natural-language-to-Cypher generation against the recipe
+knowledge graph from the Applied Lab. Two first-class implementations of
+the same primitive:
 
-Follow the learner-facing integration guide on the AISPIRE course site for
-the full task description.
+- **Core (`mapper/`)** — a deterministic NL→Cypher mapper over a bounded
+  15-template question surface. This is the production-discipline
+  implementation when the schema is bounded enough to template: every
+  question shape has a hand-authored, parameterized Cypher template; an
+  out-of-scope question raises `UnsupportedQueryError` and names the
+  supported shapes so the failure is fail-loud and the engineering
+  exercise of adding the next template is discoverable.
+- **Tier 3 (`challenge/`)** — a `GraphCypherQAChain`-style live-LLM
+  implementation of the same primitive, plus a query-shape allowlist
+  that rejects any LLM-emitted Cypher carrying destructive clauses.
+  This is the live-LLM exploration of the same primitive when the
+  input distribution is open.
 
-## What ships in this repo
+Both implementations are graded; both are required to demonstrate the
+full M9B learning objective. The Tier 3 implementation is opt-in for
+the engineering challenge it represents — it is not a backup or a
+consolation prize for the core. It is the open-distribution version of
+the same NL→code generation primitive.
 
-- `linker/` — **reference** entity linker, fully implemented. Works
-  against the lab's `recipes_kg.ttl` via Fuseki at
-  `http://localhost:3030/recipes/sparql`.
-- `linker_my/` — empty slot. Drop your lab linker here and set
-  `USE_MY_LINKER=1` to run the pipeline against your own work.
-- `intent/classify.py` — the `Intent` enum is fully defined; you implement
-  `classify(query)`.
-- `sparql/template.py` — you implement `query_for(intent, slots)`.
-- `pipeline.py` — you implement `pipeline(query)`.
-- `cli.py` — you implement the argparse + pretty-print entry point.
-- `data/recipes_kg.ttl` — same KG as the Week B lab.
-- `load_dataset.py` / `docker-compose.yml` — same as the lab.
+## What you implement
 
-## Deliverables
+Core (`mapper/` + `pipeline.py` + `cli.py`):
 
-1. Implement `intent/classify.py::classify`, `sparql/template.py::query_for`,
-   `pipeline.py::pipeline`, and `cli.py::main`.
-2. Fill in `learner_notes.md` (4 numbered sections).
-3. Open a PR with `learner_notes.md` rendered (or linked) in the description.
+- `mapper/intent.py` — `detect_shape(question)` returns a `ShapeId`
+  from the 15-shape catalog or `None` for out-of-scope.
+- `mapper/slots.py` — `extract_slots(question, shape)` fills the
+  shape's named slots (ingredient, cuisine, author, technique, etc.)
+  from the question text.
+- `mapper/compile.py` — `compile_to_cypher(shape, slots)` returns
+  `(cypher_string, params_dict)` where the cypher uses `$param`
+  parameterization (no f-string interpolation of slot values).
+- `pipeline.py` — orchestrate `detect_shape → extract_slots →
+  compile_to_cypher → session.run`. Raise `UnsupportedQueryError`
+  when `detect_shape` returns `None`.
+- `cli.py` — `python cli.py "Find Italian recipes"` pretty-prints
+  the top results.
 
-## Local run
+Tier 3 (`challenge/`):
+
+- `challenge/llm_client.py` — `get_llm_client()` resolution chain
+  (Ollama → hosted API → fail-loud with install guidance).
+- `challenge/chain.py` — build a chain that takes a question, prepends
+  the schema preamble + few-shots, calls the LLM for Cypher, validates
+  via the allowlist, and runs the Cypher.
+
+Reference materials shipped with this repo (you do not modify):
+
+- `linker/` — bundled reference linker from the Applied Lab (the
+  Integration does not redepend on your submitted lab implementation
+  so a learner whose lab linker fell short can still complete the
+  Integration).
+- `mapper/shapes.py` — `ShapeId` enum + the 15 canonical Cypher
+  templates (these are the autograder's gold).
+- `mapper/errors.py` — `UnsupportedQueryError` with the required
+  fail-loud message format.
+- `challenge/few_shots.py` — schema preamble + example pairs.
+- `challenge/allowlist.py` — `validate_query_shape()` and its
+  forbidden-clause set.
+
+## Run locally
 
 ```bash
+# Bring up Neo4j (uses docker-compose.yml in this repo)
+docker compose up -d
+# Wait for the "Started." line in the Neo4j logs:
+docker compose logs -f neo4j | head
+
+# Install core deps (Tier 3 deps install separately; see challenge/README.md)
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m spacy download en_core_web_sm
-docker compose up -d
-python load_dataset.py
-pytest tests/ -v
 
-# Once your CLI works:
-python cli.py "find me a quick Italian recipe with eggplant"
+# Load the fixture and assert acceptance counts
+python load_fixture.py
+
+# Run the core autograder
+pytest tests/test_mapper.py -v
+
+# Try the CLI on the canonical 15
+python cli.py "Find Italian recipes"
 ```
 
-## Submission
+For Tier 3 setup, see [`challenge/README.md`](challenge/README.md).
 
-`Paste your PR URL into TalentLMS → Module 9 Week B → Integration Task to submit this assignment.`
+## Submitting
+
+See [FORK-SUBMIT.md](FORK-SUBMIT.md) for the fork-and-submit flow.
+Both the core mapper tests and the Tier 3 tests must pass in CI.
+Document your design decisions in [`learner_notes.md`](learner_notes.md).
 
 ---
 

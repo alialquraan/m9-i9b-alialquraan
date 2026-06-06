@@ -1,72 +1,81 @@
-"""Precision / recall / F1 against a gold set — reference implementation.
+"""Linker P/R/F1 scoring (course-provided; do not modify).
 
-Not used by the integration pipeline; bundled so the lab-style evaluation
-harness still works from inside this repo if a learner wants to re-run
-their evaluation here.
+Triple-stated methodology (verbatim in lab-spec.md, lab guide page, and
+this docstring):
 
-Evaluation Methodology (identical to the lab spec, lab guide, and the lab
-starter docstring — see Evaluation Methodology Rule):
-
-- **Filter** ``predictions`` to the ``(doc_id, start, end)`` keys present
-  in ``gold`` before scoring. A prediction whose key is not in gold is
-  dropped (not counted as a false positive).
-- **Counting rules** for each gold key:
-  * **TP** iff predicted URI exactly matches gold URI AND gold URI is not NIL.
-  * **FP** iff prediction is a non-NIL URI different from gold (mismatch
-    OR gold is NIL).
-  * **FN** iff gold URI is non-NIL but prediction is NIL or missing.
-  * **TN** iff both gold URI and prediction are NIL — excluded from P/R denominators.
-- **Macro-average across docs** — compute precision/recall/F1 per
-  ``doc_id`` first, then average across docs.
+- Predictions are filtered to the gold span set (same doc_id, start, end)
+  before scoring; predictions on spans absent from gold are dropped.
+- A span is a true positive iff the predicted (node_id, type_label)
+  EXACTLY matches gold AND gold is non-NIL.
+- A prediction of a wrong (node_id, type_label) on a non-NIL gold is a
+  false positive AND a false negative on that span.
+- A NIL prediction on a non-NIL gold is a false negative only.
+- A non-NIL prediction on a NIL gold is a false positive only.
+- A NIL prediction on a NIL gold is a true negative (not counted in
+  precision or recall).
+- Aggregation is macro-average across documents (per-doc P/R/F1 averaged
+  with equal weight per doc; docs with no gold spans are skipped).
 """
 
 from collections import defaultdict
+from .types import GoldSpan, LinkResult
 
 
-def _group_by_doc(items: list[dict]) -> dict[str, list[dict]]:
-    grouped = defaultdict(list)
-    for item in items:
-        grouped[item["doc_id"]].append(item)
-    return grouped
+def _f1(p: float, r: float) -> float:
+    return 0.0 if (p + r) == 0 else 2 * p * r / (p + r)
 
 
-def score(predictions: list[dict], gold: list[dict]) -> dict:
-    """Compute macro-averaged precision / recall / F1.
+def score(predictions: list[LinkResult], gold: list[GoldSpan]) -> dict:
+    gold_by_key = {(g.doc_id, g.start, g.end): g for g in gold}
+    preds_by_doc: dict[str, list[LinkResult]] = defaultdict(list)
+    for p in predictions:
+        if (p.doc_id, p.start, p.end) in gold_by_key:
+            preds_by_doc[p.doc_id].append(p)
 
-    Returns dict with keys ``precision``, ``recall``, ``f1`` (4-decimal floats).
-    """
-    gold_by_doc = _group_by_doc(gold)
-    pred_by_doc = _group_by_doc(predictions)
-    per_doc = []
-    for doc_id, gold_spans in gold_by_doc.items():
-        pred_spans = pred_by_doc.get(doc_id, [])
-        gold_map = {(g["start"], g["end"]): g.get("gold_uri") for g in gold_spans}
-        pred_map = {
-            (p["start"], p["end"]): p.get("predicted_uri")
-            for p in pred_spans
-            if (p["start"], p["end"]) in gold_map
-        }
+    gold_by_doc: dict[str, list[GoldSpan]] = defaultdict(list)
+    for g in gold:
+        gold_by_doc[g.doc_id].append(g)
+
+    per_doc_metrics = []
+    for doc_id, gold_list in gold_by_doc.items():
+        if not gold_list:
+            continue
+        preds = preds_by_doc.get(doc_id, [])
+        pred_by_key = {(pp.doc_id, pp.start, pp.end): pp for pp in preds}
+
         tp = fp = fn = 0
-        for key, g_uri in gold_map.items():
-            p_uri = pred_map.get(key)
-            if g_uri and p_uri == g_uri:
-                tp += 1
-            elif g_uri and p_uri is None:
+        for g in gold_list:
+            pp = pred_by_key.get((g.doc_id, g.start, g.end))
+            if pp is None:
+                if g.gold_node_id is not None:
+                    fn += 1
+                # NIL gold + no prediction → TN (not counted)
+                continue
+            pred_pair = (pp.predicted_node_id, pp.predicted_type_label)
+            gold_pair = (g.gold_node_id, g.gold_type_label)
+            if g.gold_node_id is None and pp.predicted_node_id is None:
+                continue   # TN
+            if g.gold_node_id is None and pp.predicted_node_id is not None:
+                fp += 1
+                continue
+            if g.gold_node_id is not None and pp.predicted_node_id is None:
                 fn += 1
-            elif g_uri and p_uri and p_uri != g_uri:
+                continue
+            if pred_pair == gold_pair:
+                tp += 1
+            else:
                 fp += 1
-            elif (g_uri is None) and (p_uri is not None):
-                fp += 1
-            # TN-NIL excluded
-        p = tp / (tp + fp) if (tp + fp) else 0.0
-        r = tp / (tp + fn) if (tp + fn) else 0.0
-        f = 2 * p * r / (p + r) if (p + r) else 0.0
-        per_doc.append((p, r, f))
-    if not per_doc:
+                fn += 1
+
+        precision = tp / (tp + fp) if (tp + fp) else 0.0
+        recall = tp / (tp + fn) if (tp + fn) else 0.0
+        per_doc_metrics.append((precision, recall, _f1(precision, recall)))
+
+    if not per_doc_metrics:
         return {"precision": 0.0, "recall": 0.0, "f1": 0.0}
-    n = len(per_doc)
-    return {
-        "precision": round(sum(t[0] for t in per_doc) / n, 4),
-        "recall": round(sum(t[1] for t in per_doc) / n, 4),
-        "f1": round(sum(t[2] for t in per_doc) / n, 4),
-    }
+
+    n = len(per_doc_metrics)
+    P = sum(m[0] for m in per_doc_metrics) / n
+    R = sum(m[1] for m in per_doc_metrics) / n
+    F = sum(m[2] for m in per_doc_metrics) / n
+    return {"precision": P, "recall": R, "f1": F}

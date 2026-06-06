@@ -1,63 +1,118 @@
-"""Pick the single best URI from a candidate set, or return NIL.
+"""Candidate disambiguation (course-provided; do not modify).
 
-Reference implementation. Two signals applied in order:
-
-1. **Type compatibility** — keep only candidates whose ``rdf:type`` is
-   compatible with ``ner_label`` according to ``NER_LABEL_TO_KG_TYPE``.
-2. **Popularity prior** — when type filtering leaves more than one
-   candidate, prefer the candidate that participates in the most triples
-   (a cheap popularity signal computed via ``?u ?p ?o`` count).
-
-Returns ``None`` (NIL) when no candidate survives or the popularity signal
-is tied at the top.
+Signals applied in order:
+  1. Resolved-unique — only one candidate; pick it.
+  2. Resolved-by-type — NER label maps to exactly one candidate's KG label.
+  3. Resolved-by-hierarchy — NER label compatible via [:SUBCLASS_OF*0..]
+     traversal to a KG type root.
+  4. Resolved-by-context — 1-hop Cypher MATCH from candidate to any
+     already-resolved entity in the same document.
+  5. NIL — no signal disambiguates, or no candidates returned.
 """
 
-from typing import Optional
-
-from rdflib import URIRef
-
-from linker.kg import connect
-from linker.lookup import DEFAULT_ENDPOINT, has_type
-from linker.ner_to_kg_type import NER_LABEL_TO_KG_TYPE
+from .types import LinkResult
 
 
-_POP_Q = "SELECT (COUNT(*) AS ?n) WHERE { ?u ?p ?o }"
+# Mapping from spaCy/transformer NER label to candidate KG labels.
+NER_LABEL_TO_KG_TYPE = {
+    "FOOD":     ["Ingredient", "Cuisine"],   # genuinely ambiguous; hierarchy disambiguates
+    "DISH":     ["Recipe"],
+    "INGREDIENT": ["Ingredient"],
+    "CUISINE":  ["Cuisine"],
+    "PERSON":   ["Author"],
+    "ORG":      ["Author"],                  # cookbook publishers occasionally tagged ORG
+    "TECH":     ["Technique"],
+    "TECHNIQUE": ["Technique"],
+}
+
+# Cuisine-root names — used for hierarchical disambiguation when a FOOD
+# surface matches both an :Ingredient and a :Cuisine.
+_CUISINE_ROOT_NAMES = {"World", "Asian", "European", "Americas"}
 
 
-def _popularity(uri: str, endpoint: str) -> int:
-    g = connect(endpoint)
-    rows = list(g.query(_POP_Q, initBindings={"u": URIRef(uri)}))
-    if not rows:
-        return 0
-    try:
-        return int(rows[0][0])
-    except (TypeError, ValueError):
-        return 0
+def _is_cuisine_descendant(driver, candidate_id: str) -> bool:
+    """True iff candidate is a :Cuisine that reaches a cuisine-root via
+    [:SUBCLASS_OF*0..]. The roots themselves count (the *0.. allows it).
+    """
+    cypher = (
+        "MATCH (c:Cuisine {id: $id})-[:SUBCLASS_OF*0..]->(root:Cuisine) "
+        "WHERE root.name IN $roots "
+        "RETURN count(root) AS c"
+    )
+    with driver.session() as session:
+        rec = session.run(
+            cypher, id=candidate_id, roots=list(_CUISINE_ROOT_NAMES)
+        ).single()
+    return rec is not None and rec["c"] > 0
+
+
+def _has_context_link(driver, candidate_id: str, neighbor_ids: list[str]) -> bool:
+    """True iff candidate has any 1-hop relationship to any neighbor_id."""
+    if not neighbor_ids:
+        return False
+    cypher = (
+        "MATCH (c:Entity {id: $id})-[r]-(n:Entity) "
+        "WHERE n.id IN $neighbors "
+        "RETURN count(r) AS c"
+    )
+    with driver.session() as session:
+        rec = session.run(
+            cypher, id=candidate_id, neighbors=neighbor_ids
+        ).single()
+    return rec is not None and rec["c"] > 0
 
 
 def disambiguate(
-    candidate_uris: list[str],
+    driver,
+    candidates_: list[dict],
     ner_label: str,
-    doc_context: dict,
-    endpoint: str = DEFAULT_ENDPOINT,
-) -> tuple[Optional[str], str]:
-    """Return ``(uri, reason)`` — the best URI plus a reason string.
+    doc_resolved: list[LinkResult],
+) -> tuple[dict | None, str]:
+    """Return (chosen_candidate_or_None, reason_token).
 
-    ``reason`` is one of ``"resolved-by-type"``, ``"resolved-by-context"``,
-    ``"nil-ambiguous"``, ``"nil-no-type-mapping"``.
+    See module docstring for the signal cascade.
     """
-    kg_type = NER_LABEL_TO_KG_TYPE.get(ner_label)
-    if kg_type is None:
-        return None, "nil-no-type-mapping"
-    typed = [u for u in candidate_uris if has_type(u, kg_type, endpoint)]
-    if len(typed) == 0:
-        return None, "nil-ambiguous"
-    if len(typed) == 1:
-        return typed[0], "resolved-by-type"
-    scored = sorted(
-        ((u, _popularity(u, endpoint)) for u in typed),
-        key=lambda t: -t[1],
-    )
-    if scored[0][1] > scored[1][1]:
-        return scored[0][0], "resolved-by-context"
+    if not candidates_:
+        return None, "nil-no-candidates"
+
+    # 1. Unique candidate
+    if len(candidates_) == 1:
+        return candidates_[0], "resolved-unique"
+
+    # 2. Type-filter
+    allowed_labels = NER_LABEL_TO_KG_TYPE.get(ner_label, [])
+    type_filtered = [
+        c for c in candidates_
+        if any(lbl in allowed_labels for lbl in c["labels"])
+    ]
+    if len(type_filtered) == 1:
+        return type_filtered[0], "resolved-by-type"
+
+    # 3. Hierarchy-filter — for FOOD/ambiguous: cuisine wins when descendant
+    # of a cuisine root. (Bias built in so e.g. "Sichuan" tagged FOOD lands
+    # on Cuisine.)
+    if type_filtered:
+        hierarchy_filtered = []
+        for c in type_filtered:
+            if "Cuisine" in c["labels"] and _is_cuisine_descendant(driver, c["id"]):
+                hierarchy_filtered.append(c)
+        if len(hierarchy_filtered) == 1:
+            return hierarchy_filtered[0], "resolved-by-hierarchy"
+        # If type-filter narrowed to >1 and hierarchy filter doesn't pick
+        # exactly one, continue to context.
+
+    # 4. Context: prefer the candidate that has a 1-hop relationship to
+    # any already-resolved entity.
+    neighbor_ids = [
+        r.predicted_node_id for r in doc_resolved
+        if r.predicted_node_id is not None
+    ]
+    pool = type_filtered if type_filtered else candidates_
+    context_hits = [
+        c for c in pool if _has_context_link(driver, c["id"], neighbor_ids)
+    ]
+    if len(context_hits) == 1:
+        return context_hits[0], "resolved-by-context"
+
+    # 5. NIL — ambiguous after every signal.
     return None, "nil-ambiguous"
