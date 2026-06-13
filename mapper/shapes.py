@@ -105,8 +105,6 @@ CANONICAL_CYPHER: dict[ShapeId, str] = {
         "LIMIT 50"
     ),
     ShapeId.Q11: (
-        "MATCH (:Recipe)-[:OF_CUISINE]->(:Cuisine {name: $cuisine}) "
-        "WITH 1 AS _ "
         "MATCH (r:Recipe)-[:OF_CUISINE]->(:Cuisine {name: $cuisine}) "
         "MATCH (r)-[:USES_INGREDIENT]->(i:Ingredient) "
         "RETURN DISTINCT i.name AS ingredient "

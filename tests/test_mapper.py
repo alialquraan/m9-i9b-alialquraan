@@ -31,6 +31,44 @@ DATA_DIR = REPO_ROOT / "data"
 EVAL_PATH = DATA_DIR / "eval_questions.jsonl"
 
 
+# ---------------------------------------------------------------------------
+# learner_notes.md must be touched (rubric-graded deliverable)
+# ---------------------------------------------------------------------------
+
+# MD5 of the unmodified starter learner_notes.md template. If the student's
+# file still hashes to this value, they have not filled it in.
+_UNMODIFIED_LEARNER_NOTES_MD5 = "a7ff35ce0a0f977dbe1e2d19d5906b56"
+
+
+def test_learner_notes_modified():
+    """Sentinel: `learner_notes.md` is a TA-rubric-graded deliverable. The
+    autograder cannot judge content quality, but it can reject the
+    unmodified template. A submission whose `learner_notes.md` is
+    byte-identical to the starter has not been filled in and must fail
+    CI — the rubric expects narrative answers in place of the
+    `> _Your answer here._` placeholders.
+    """
+    import hashlib
+    notes = REPO_ROOT / "learner_notes.md"
+    assert notes.exists(), "learner_notes.md is missing from the submission"
+    h = hashlib.md5(notes.read_bytes()).hexdigest()
+    assert h != _UNMODIFIED_LEARNER_NOTES_MD5, (
+        "learner_notes.md is the unmodified starter template. Fill in the "
+        "narrative answers (each `> _Your answer here._` placeholder is a "
+        "prompt) before resubmitting."
+    )
+    # Also flag the textual placeholder explicitly — covers the case
+    # where a learner edits a header or adds a single character but
+    # leaves the prompts unanswered.
+    text = notes.read_text()
+    placeholder_count = text.count("_Your answer here._")
+    assert placeholder_count == 0, (
+        f"learner_notes.md still contains {placeholder_count} unanswered "
+        "`_Your answer here._` placeholder(s). Replace each one with a "
+        "narrative answer."
+    )
+
+
 def _load_eval() -> list[dict]:
     return [json.loads(line) for line in EVAL_PATH.read_text().splitlines() if line.strip()]
 
