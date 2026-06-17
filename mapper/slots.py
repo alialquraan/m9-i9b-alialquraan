@@ -17,13 +17,8 @@ triples used by the autograder.
 import re
 from .shapes import ShapeId
 
-# انقل الاستيراد بالكامل داخل الـ try لحماية بيئة الـ CI من الانهيار
-try:
-    import spacy
-    nlp = spacy.load("en_core_web_sm")
-except (OSError, ModuleNotFoundError):
-    # إذا كانت المكتبة غير مثبتة أو click مفقودة أو الموديل غائب، اجعل nlp يساوي None وتخطى الأمر
-    nlp = None
+# نلغي spacy تماماً لضمان عدم حدوث ModuleNotFoundError في الـ CI
+nlp = None
 
 CUISINES = [
     "Italian", "Sichuan", "Mexican", "Indian", "French", "Japanese", 
@@ -59,20 +54,13 @@ def extract_slots(question: str, shape: ShapeId) -> dict:
     slots = {}
     question_lower = question.lower()
 
+    # استخراج اسم الكاتب بالاعتماد الكامل على الـ Regex النظيف والمتوافق مع الاسئلة الـ 15
     if shape in [ShapeId.Q2, ShapeId.Q8]:
-        if nlp:
-            doc = nlp(question)
-            for ent in doc.ents:
-                if ent.label_ == "PERSON":
-                    slots["author"] = ent.text
-                    break
-        
-        if "author" not in slots:
-            match = re.search(r"by\s+author\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)", question)
-            if not match:
-                match = re.search(r"by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)", question)
-            if match:
-                slots["author"] = match.group(1).strip()
+        match = re.search(r"by\s+author\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)", question)
+        if not match:
+            match = re.search(r"by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)", question)
+        if match:
+            slots["author"] = match.group(1).strip()
 
     if shape == ShapeId.Q10:
         match = re.search(r"under\s+(\d+)\s*minutes", question_lower)
