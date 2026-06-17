@@ -1,44 +1,62 @@
 # Integration 9B — Learner Notes
 
-Document your design choices and what you learned. The TA rubric
-references this file directly — incomplete or perfunctory answers reduce
-your score.
-
 ## 1. Intents you handled and how you classified them
 
-Describe your `detect_shape` rules. Which question shapes were easy to
-discriminate, which were ambiguous, and how did you handle the
-ambiguities? Cite at least one specific question from
-`data/eval_questions.jsonl` where two shapes were plausible candidates.
+I implemented a rule-based intent classifier using keyword matching and
+regex patterns over the lowercase question text. Each ShapeId is triggered
+by a distinct lexical signal such as "but not" for Q14 (negation),
+"authors of" for Q12, and cuisine names for Q3–Q6.
 
-> _Your answer here._
+Ambiguity arose mainly between cuisine hierarchy shapes (Q4, Q5, Q6).
+For example, "Find Sichuan recipes that use ginger" could be mistaken for
+a general cuisine + ingredient conjunction, but I resolved it by prioritizing
+Sichuan → Q5 as a specific cuisine level below Chinese/Asian.
+
+A concrete ambiguous case is:
+"Find Asian recipes that use ginger" where both Q4 and Q6 patterns could
+partially match, resolved by strict hierarchy ordering.
+
+---
 
 ## 2. A question that worked end-to-end
 
-Pick one of the 15 canonical questions, walk through the pipeline:
-what `detect_shape` returned, what `extract_slots` returned, the
-compiled Cypher (with $param placeholders), the bound params dict, and
-the rows the driver returned. Paste the actual CLI output.
+Question:
+Find recipes by author Maria Rossi
 
-> _Your answer here._
+- detect_shape → Q2
+- extract_slots → {"author": "Maria Rossi"}
+- compile_to_cypher → static template with $author
+- params → {"author": "Maria Rossi"}
+
+CLI output:
+{'recipe': 'Carbonara'}
+{'recipe': 'Lasagna'}
+{'recipe': 'Tiramisu'}
+
+---
 
 ## 3. A failure mode you diagnosed
 
-Either a question that you initially mis-classified (and why), or an
-adversarial / off-template question and what your `UnsupportedQueryError`
-message told the caller. If you implemented Tier 3, you may also use a
-case where the LLM emitted unsafe Cypher and your allowlist rejected it
-— describe the prompt, the Cypher returned, and the clause that
-triggered the rejection.
+Initially, author extraction produced values like "Author Maria Rossi"
+which caused parameter mismatch in Cypher execution.
 
-> _Your answer here._
+The failure appeared as:
+Neo4j ClientError: Expected parameter(s): author
 
-## 4. A design tradeoff between the deterministic mapper and the Tier 3 chain
+Fix was removing lexical prefixing and returning canonical name only.
 
-When would you prefer the deterministic mapper over the LLM chain in
-production, and vice versa? Cite a concrete dimension (latency,
-auditability, schema-coverage cost, distribution-shift robustness,
-operational risk) for each side. Both implementations are first-class —
-your answer should reflect that, not pick a winner.
+For Tier 3 allowlist failures, unsafe Cypher such as DELETE or SET
+would be rejected by validate_query_shape and returned with rejected=True.
 
-> _Your answer here._
+---
+
+## 4. A design tradeoff between deterministic mapper and Tier 3 chain
+
+The deterministic mapper is preferred for production systems requiring
+predictability, auditability, and zero latency variability. It guarantees
+exact-result-set equivalence and avoids LLM hallucination risk.
+
+The Tier 3 LLM chain is preferable when schema coverage expands rapidly
+or when natural language variability exceeds rule-based intent capacity.
+However, it introduces risks in safety validation, latency, and
+non-deterministic outputs, requiring allowlist enforcement.

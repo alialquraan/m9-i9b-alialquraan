@@ -41,7 +41,9 @@ def compile_to_cypher(shape: ShapeId, slots: dict) -> tuple[str, dict]:
     #    compile-time mistake.
     # 2. Return (template, slots). Do not string-format the template
     #    with the slot values; the driver binds $params at query time.
-    raise NotImplementedError(
-        "compile_to_cypher is not yet implemented — see the Integration "
-        "Guide Cypher Compilation section and the docstring above."
-    )
+    if shape not in CANONICAL_CYPHER:
+        raise KeyError(f"Unknown shape: {shape}")
+
+    template = CANONICAL_CYPHER[shape]
+
+    return template, dict(slots)
