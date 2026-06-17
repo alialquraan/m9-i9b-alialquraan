@@ -12,6 +12,7 @@ real bug, and a classifier that returns a confident answer on an
 off-template question is the silent-failure mode the Reading warns
 against. Prefer None over a false positive.
 """
+import re
 
 from .shapes import ShapeId
 
@@ -48,7 +49,64 @@ def detect_shape(question: str) -> ShapeId | None:
     # 2. Apply rules in priority order — more-specific shapes (q14
     #    "but not", q8 "by ... that use") before less-specific (q1, q3).
     # 3. Return the matching ShapeId, or None if nothing matches.
-    raise NotImplementedError(
-        "detect_shape is not yet implemented — see the Integration Guide "
-        "Intent Classification section and the docstring above."
-    )
+    q = question.lower()
+
+    
+    if "but not" in q or re.search(r"\bwithout\b", q):
+        return ShapeId.Q14
+
+    
+    if "by" in q and "that use" in q:
+        return ShapeId.Q8
+
+    
+    
+    if "authors of" in q:
+        return ShapeId.Q12
+
+    
+    if "ingredients used in" in q:
+        return ShapeId.Q11
+
+    
+    if "ranked by popularity" in q or "most popular" in q:
+        return ShapeId.Q9
+
+    
+    if "under" in q and "minute" in q:
+        return ShapeId.Q10
+
+    
+    if "or any subtype" in q or "any subtype" in q:
+        return ShapeId.Q13
+
+    
+    if "optionally tagged" in q:
+        return ShapeId.Q15
+
+    
+    if "require" in q and "technique" in q:
+        return ShapeId.Q7
+
+    
+    if "asian" in q:
+        return ShapeId.Q4
+
+    if "sichuan" in q:
+        return ShapeId.Q5
+
+    if "chinese" in q:
+        return ShapeId.Q6
+
+    if "italian" in q:
+        return ShapeId.Q3
+
+    
+    if "by author" in q or re.search(r"by [a-z ]+", q):
+        return ShapeId.Q2
+
+    
+    if "use" in q or "with" in q:
+        return ShapeId.Q1
+
+    return None
