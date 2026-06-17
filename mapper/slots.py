@@ -15,13 +15,14 @@ triples used by the autograder.
 """
 
 import re
-import spacy
 from .shapes import ShapeId
 
-
+# انقل الاستيراد بالكامل داخل الـ try لحماية بيئة الـ CI من الانهيار
 try:
+    import spacy
     nlp = spacy.load("en_core_web_sm")
-except OSError:
+except (OSError, ModuleNotFoundError):
+    # إذا كانت المكتبة غير مثبتة أو click مفقودة أو الموديل غائب، اجعل nlp يساوي None وتخطى الأمر
     nlp = None
 
 CUISINES = [
